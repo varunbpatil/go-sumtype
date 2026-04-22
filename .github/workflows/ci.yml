@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  formatting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt check
+        run: |
+          UNFORMATTED=$(gofmt -s -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Files need formatting:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+  vetting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+
+  linting:
+    needs: [formatting, vetting]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+
+  tests:
+    needs: [formatting, vetting]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: run tests with race detector
+        run: go test -v -race ./...
+      - name: generate coverage profile
+        run: go test -coverprofile=coverage.out ./...
+      - name: filter examples from coverage
+        run: grep -v "/examples" coverage.out > coverage_filtered.out && mv coverage_filtered.out coverage.out
+      - name: coverage by function
+        run: go tool cover -func coverage.out
+      - name: generate coverage report
+        run: go tool cover -html=coverage.out -o coverage.html
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage.html
+
+  sumtype-check:
+    needs: [tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: install go-check-sumtype
+        run: go install github.com/alecthomas/go-check-sumtype/cmd/go-check-sumtype@latest
+      - name: check examples are exhaustive
+        run: go-check-sumtype ./examples/...
+
+  security:
+    needs: [linting, tests, sumtype-check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golang/govulncheck-action@v1
+        with:
+          repo-checkout: false
